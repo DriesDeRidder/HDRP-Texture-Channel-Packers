@@ -39,48 +39,74 @@ public class OpacityAlbedoTexturePacker : EditorWindow
 
         string path = AssetDatabase.GetAssetPath(albedoTexture);
         TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
+
+        // Temporarily enable Read/Write on both input textures so GetPixels works,
+        // remembering which ones we changed so we can restore them afterwards.
+        var readabilityChanges = new System.Collections.Generic.List<string>();
+        try
+        {
+            EnsureReadable(albedoTexture, readabilityChanges);
+            EnsureReadable(OpacityTexture, readabilityChanges);
+
+            Color[] albedoPixels = albedoTexture.GetPixels();
+            Color[] alphaPixels = OpacityTexture.GetPixels();
+
+            for (int i = 0; i < albedoPixels.Length; i++)
+            {
+                albedoPixels[i].a = alphaPixels[i].a;
+            }
+
+            Texture2D combinedTexture = new Texture2D(albedoTexture.width, albedoTexture.height, TextureFormat.RGBA32, false);
+            combinedTexture.SetPixels(albedoPixels);
+            combinedTexture.Apply();
+
+            byte[] pngData = combinedTexture.EncodeToPNG();
+            if (pngData != null)
+            {
+                string combinedTexturePath = AssetDatabase.GenerateUniqueAssetPath(path.Replace(".png", "_combined.png"));
+                System.IO.File.WriteAllBytes(combinedTexturePath, pngData);
+                AssetDatabase.Refresh();
+                TextureImporter importerForCombined = TextureImporter.GetAtPath(combinedTexturePath) as TextureImporter;
+                importerForCombined.sRGBTexture = importer.sRGBTexture;
+                AssetDatabase.ImportAsset(combinedTexturePath, ImportAssetOptions.ForceUpdate);
+            }
+
+            DestroyImmediate(combinedTexture);
+        }
+        finally
+        {
+            RestoreReadable(readabilityChanges);
+        }
+    }
+
+    // Enables Read/Write on the texture if it isn't already, recording its path so the
+    // original setting can be restored later. Already-readable textures are left untouched.
+    private static void EnsureReadable(Texture2D texture, System.Collections.Generic.List<string> changedPaths)
+    {
+        if (texture == null) return;
+
+        string path = AssetDatabase.GetAssetPath(texture);
+        TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
         if (importer != null && !importer.isReadable)
         {
-            EditorGUIUtility.PingObject( AssetDatabase.LoadAssetAtPath(path, typeof(Texture2D))as Texture2D);
-            EditorUtility.DisplayDialog("Error", "Albedo texture must be set to readable in import settings", "OK");
-            return;
+            importer.isReadable = true;
+            importer.SaveAndReimport();
+            changedPaths.Add(path);
         }
+    }
 
-        path = AssetDatabase.GetAssetPath(OpacityTexture);
-        importer = AssetImporter.GetAtPath(path) as TextureImporter;
-        if (importer != null && !importer.isReadable)
+    // Restores isReadable = false on every texture we toggled in EnsureReadable.
+    private static void RestoreReadable(System.Collections.Generic.List<string> changedPaths)
+    {
+        foreach (string path in changedPaths)
         {
-            EditorGUIUtility.PingObject( AssetDatabase.LoadAssetAtPath(path, typeof(Texture2D))as Texture2D);
-
-            EditorUtility.DisplayDialog("Error", "Alpha texture must be set to readable in import settings", "OK");
-
-            return;
+            TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
+            if (importer != null && importer.isReadable)
+            {
+                importer.isReadable = false;
+                importer.SaveAndReimport();
+            }
         }
-
-        Color[] albedoPixels = albedoTexture.GetPixels();
-        Color[] alphaPixels = OpacityTexture.GetPixels();
-
-        for (int i = 0; i < albedoPixels.Length; i++)
-        {
-            albedoPixels[i].a = alphaPixels[i].a;
-        }
-
-        Texture2D combinedTexture = new Texture2D(albedoTexture.width, albedoTexture.height, TextureFormat.RGBA32, false);
-        combinedTexture.SetPixels(albedoPixels);
-        combinedTexture.Apply();
-
-        byte[] pngData = combinedTexture.EncodeToPNG();
-        if (pngData != null)
-        {
-            string combinedTexturePath = AssetDatabase.GenerateUniqueAssetPath(path.Replace(".png", "_combined.png"));
-            System.IO.File.WriteAllBytes(combinedTexturePath, pngData);
-            AssetDatabase.Refresh();
-            TextureImporter importerForCombined = TextureImporter.GetAtPath(combinedTexturePath) as TextureImporter;
-            importerForCombined.sRGBTexture = importer.sRGBTexture;
-            AssetDatabase.ImportAsset(combinedTexturePath, ImportAssetOptions.ForceUpdate);
-        }
-
-        DestroyImmediate(combinedTexture);
     }
 }
 #endif

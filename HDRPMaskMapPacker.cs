@@ -168,56 +168,101 @@ public class HDRPMaskMapPacker : EditorWindow
         if (!ValidateTexture(detailMaskTexture, "Detail Mask", width, height)) return;
         if (!ValidateTexture(smoothnessOrRoughnessTexture, smoothnessSource == SmoothnessSource.Smoothness ? "Smoothness" : "Roughness", width, height)) return;
 
-        Color[] metallicPixels = metallicTexture ? metallicTexture.GetPixels() : null;
-        Color[] aoPixels = aoTexture ? aoTexture.GetPixels() : null;
-        Color[] detailPixels = detailMaskTexture ? detailMaskTexture.GetPixels() : null;
-        Color[] smoothPixels = smoothnessOrRoughnessTexture ? smoothnessOrRoughnessTexture.GetPixels() : null;
-
-        int count = width * height;
-        Color[] packed = new Color[count];
-
-        for (int i = 0; i < count; i++)
+        // Temporarily enable Read/Write on all input textures so GetPixels works,
+        // remembering which ones we changed so we can restore them afterwards.
+        var readabilityChanges = new System.Collections.Generic.List<string>();
+        try
         {
-            float r = metallicPixels != null ? metallicPixels[i].r : defaultMetallic;
-            float g = aoPixels != null ? aoPixels[i].r : defaultAO;
-            float b = detailPixels != null ? detailPixels[i].r : defaultDetailMask;
+            EnsureReadable(metallicTexture, readabilityChanges);
+            EnsureReadable(aoTexture, readabilityChanges);
+            EnsureReadable(detailMaskTexture, readabilityChanges);
+            EnsureReadable(smoothnessOrRoughnessTexture, readabilityChanges);
 
-            float a;
-            if (smoothPixels != null)
+            Color[] metallicPixels = metallicTexture ? metallicTexture.GetPixels() : null;
+            Color[] aoPixels = aoTexture ? aoTexture.GetPixels() : null;
+            Color[] detailPixels = detailMaskTexture ? detailMaskTexture.GetPixels() : null;
+            Color[] smoothPixels = smoothnessOrRoughnessTexture ? smoothnessOrRoughnessTexture.GetPixels() : null;
+
+            int count = width * height;
+            Color[] packed = new Color[count];
+
+            for (int i = 0; i < count; i++)
             {
-                float sample = smoothPixels[i].r;
-                a = smoothnessSource == SmoothnessSource.Roughness ? 1f - sample : sample;
-            }
-            else
-            {
-                a = defaultSmoothness;
+                float r = metallicPixels != null ? metallicPixels[i].r : defaultMetallic;
+                float g = aoPixels != null ? aoPixels[i].r : defaultAO;
+                float b = detailPixels != null ? detailPixels[i].r : defaultDetailMask;
+
+                float a;
+                if (smoothPixels != null)
+                {
+                    float sample = smoothPixels[i].r;
+                    a = smoothnessSource == SmoothnessSource.Roughness ? 1f - sample : sample;
+                }
+                else
+                {
+                    a = defaultSmoothness;
+                }
+
+                packed[i] = new Color(r, g, b, a);
             }
 
-            packed[i] = new Color(r, g, b, a);
+            Texture2D packedTexture = new Texture2D(width, height, TextureFormat.RGBA32, false, true);
+            packedTexture.SetPixels(packed);
+            packedTexture.Apply();
+
+            byte[] pngData = packedTexture.EncodeToPNG();
+            if (pngData != null)
+            {
+                string maskPath = AssetDatabase.GenerateUniqueAssetPath($"{outputDir}/{fileName}.png");
+                System.IO.File.WriteAllBytes(maskPath, pngData);
+                AssetDatabase.Refresh();
+
+                TextureImporter maskImporter = AssetImporter.GetAtPath(maskPath) as TextureImporter;
+                if (maskImporter != null)
+                {
+                    maskImporter.sRGBTexture = false;
+                    AssetDatabase.ImportAsset(maskPath, ImportAssetOptions.ForceUpdate);
+                }
+
+                EditorGUIUtility.PingObject(AssetDatabase.LoadAssetAtPath<Texture2D>(maskPath));
+            }
+
+            DestroyImmediate(packedTexture);
         }
-
-        Texture2D packedTexture = new Texture2D(width, height, TextureFormat.RGBA32, false, true);
-        packedTexture.SetPixels(packed);
-        packedTexture.Apply();
-
-        byte[] pngData = packedTexture.EncodeToPNG();
-        if (pngData != null)
+        finally
         {
-            string maskPath = AssetDatabase.GenerateUniqueAssetPath($"{outputDir}/{fileName}.png");
-            System.IO.File.WriteAllBytes(maskPath, pngData);
-            AssetDatabase.Refresh();
-
-            TextureImporter maskImporter = AssetImporter.GetAtPath(maskPath) as TextureImporter;
-            if (maskImporter != null)
-            {
-                maskImporter.sRGBTexture = false;
-                AssetDatabase.ImportAsset(maskPath, ImportAssetOptions.ForceUpdate);
-            }
-
-            EditorGUIUtility.PingObject(AssetDatabase.LoadAssetAtPath<Texture2D>(maskPath));
+            RestoreReadable(readabilityChanges);
         }
+    }
 
-        DestroyImmediate(packedTexture);
+    // Enables Read/Write on the texture if it isn't already, recording its path so the
+    // original setting can be restored later. Already-readable textures are left untouched.
+    private static void EnsureReadable(Texture2D texture, System.Collections.Generic.List<string> changedPaths)
+    {
+        if (texture == null) return;
+
+        string path = AssetDatabase.GetAssetPath(texture);
+        TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
+        if (importer != null && !importer.isReadable)
+        {
+            importer.isReadable = true;
+            importer.SaveAndReimport();
+            changedPaths.Add(path);
+        }
+    }
+
+    // Restores isReadable = false on every texture we toggled in EnsureReadable.
+    private static void RestoreReadable(System.Collections.Generic.List<string> changedPaths)
+    {
+        foreach (string path in changedPaths)
+        {
+            TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
+            if (importer != null && importer.isReadable)
+            {
+                importer.isReadable = false;
+                importer.SaveAndReimport();
+            }
+        }
     }
 
     private bool ValidateTexture(Texture2D texture, string label, int width, int height)
@@ -227,15 +272,6 @@ public class HDRPMaskMapPacker : EditorWindow
         if (texture.width != width || texture.height != height)
         {
             EditorUtility.DisplayDialog("Error", $"{label} texture dimensions must match ({width}x{height})", "OK");
-            return false;
-        }
-
-        string path = AssetDatabase.GetAssetPath(texture);
-        TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
-        if (importer != null && !importer.isReadable)
-        {
-            EditorGUIUtility.PingObject(AssetDatabase.LoadAssetAtPath<Texture2D>(path));
-            EditorUtility.DisplayDialog("Error", $"{label} texture must be set to readable in import settings", "OK");
             return false;
         }
 
