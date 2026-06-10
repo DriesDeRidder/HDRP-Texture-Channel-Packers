@@ -1,4 +1,4 @@
-# Unity-HDRP-Opacity-Albedo-packer
+# Unity-HDRP-Texture-Channel-Packers
 In case you have a seperate opacity map and a base (diffuse/Albedo) map. You'd need to combine them into 1 to use the transparancy in the hdrp lit shader. This does that for you
 
 
@@ -12,8 +12,7 @@ In case you have a seperate opacity map and a base (diffuse/Albedo) map. You'd n
 
 
 # How to use
-- place the script in an editor folder (doesn't have to because I wrapped it in Unity_Editor preprocessor directives)
-- Make the albedo and opacity map readable/writable.
+- place the script in an editor folder 
 - Open me by going to Tools/Opacity Albedo Packer
 - place the textures in the respective slots
 <img src=https://github.com/DriesDeRidder/Unity-HDRP-Opacity-Albedo-packer/assets/32333783/ddfd58b9-0c4d-482e-96c0-ca252a3fadb7  width="387">
